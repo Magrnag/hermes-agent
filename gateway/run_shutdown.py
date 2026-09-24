@@ -870,7 +870,7 @@ class GatewayShutdownMixin:
             return 0
         try:
             from cron.jobs import get_job
-            from cron.scheduler import _resolve_delivery_targets
+            from cron.scheduler import _format_failure_delivery, _resolve_delivery_targets
         except Exception as e:
             logger.debug("Cron interrupt notification unavailable: %s", e)
             return 0
@@ -888,12 +888,13 @@ class GatewayShutdownMixin:
             except Exception as e:
                 logger.debug("Cron interrupt targets unresolved for %s: %s", job_id, e)
                 continue
-            job_name = job.get("name") or job_id
-            msg = (
-                f"⚠️ Scheduled job '{job_name}' was cut short because Hermes is {action}; "
-                "no result this run. It will run again on schedule, or run it now with "
-                f"`hermes cron run {job_name}` once Hermes is back."
+            interruption = "gateway restart" if self._restart_requested else "gateway shutdown"
+            msg = _format_failure_delivery(
+                job,
+                f"Interrupted by {interruption} before the run finished.",
             )
+            if not msg:
+                continue
             for target in targets or ():
                 try:
                     platform = Platform(str(target.get("platform", "")).lower())

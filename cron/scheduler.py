@@ -284,6 +284,116 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
 
     return message
 
+def _external_failure_formatter_script() -> Optional[Path]:
+    """Configured shared formatter script, or None when the integration is disabled."""
+
+    try:
+        cfg = load_config() or {}
+        cron_cfg = cfg.get("cron") if isinstance(cfg, dict) else None
+        raw = cron_cfg.get("failure_formatter_script") if isinstance(cron_cfg, dict) else None
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        script = Path(raw).expanduser().resolve()
+        return script
+    except Exception:
+        return None
+
+
+def _japanese_failure_fallback(job: dict) -> str:
+    """Bounded last-resort copy. Raw exceptions and output never enter this message."""
+
+    raw_id = str(job.get("id") or "hermes-job")
+    raw_name = str(job.get("name") or "Hermes")
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]", "", raw_id)[:80] or "hermes-job"
+    safe_name = re.sub(r"[^A-Za-z0-9_. -]", "", raw_name)[:80].strip() or "Hermes"
+    return (
+        f"【❌ 失敗】{safe_name}\n"
+        "・通知生成に失敗\n"
+        f"・ジョブ: {safe_id}\n"
+        "・状態: 要確認"
+    )
+
+
+def _format_failure_delivery(job: dict, error: str | None) -> str:
+    """Normalize a Hermes failure through the repository-owned deterministic formatter."""
+
+    script = _external_failure_formatter_script()
+    if script is None:
+        return _summarize_cron_failure_for_delivery(job, error) + _failure_streak_nudge(job)
+
+    retry_state = job.get("unreachable_retry")
+    retry_count = (
+        int(retry_state.get("attempt") or 0)
+        if isinstance(retry_state, dict)
+        else 0
+    )
+    max_attempts = 4 if job.get("_model_unreachable") or retry_count else 1
+    attempt = min(retry_count + 1, max_attempts)
+    retryable = attempt < max_attempts
+    raw_error = str(error or "")
+    match = re.match(r"^([A-Za-z][A-Za-z0-9_.]{0,199})(?::|$)", raw_error.strip())
+    error_class = match.group(1) if match else "RuntimeFailure"
+    payload = {
+        "status": "FAILURE",
+        "job_id": str(job.get("id") or "hermes-job"),
+        "display_name": str(job.get("name") or job.get("id") or "Hermes"),
+        "summary": "",
+        "important_changes": [],
+        "warnings": [],
+        "action_required": [] if retryable else ["local logを確認"],
+        "next_action": "次回自動再試行" if retryable else None,
+        "artifact_refs": [],
+        "run_id": str(job.get("execution_id") or "") or None,
+        "error_class": error_class,
+        "error_summary": raw_error[:64_000],
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+    }
+    repo_root = script.parent.parent
+    env = os.environ.copy()
+    source_path = str(repo_root / "src")
+    env["PYTHONPATH"] = (
+        source_path + os.pathsep + env["PYTHONPATH"]
+        if env.get("PYTHONPATH")
+        else source_path
+    )
+    state_path = Path(str(job.get("workdir") or get_hermes_home())) / "notification-state.json"
+    command = [
+        sys.executable,
+        str(script),
+        "-",
+        "--state",
+        str(state_path),
+        "--job-id",
+        str(job.get("id") or "hermes-job"),
+        "--display-name",
+        str(job.get("name") or "Hermes"),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            input=json.dumps(payload, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+            cwd=str(repo_root),
+            env=env,
+            creationflags=windows_hide_flags(),
+            check=False,
+        )
+        message = completed.stdout.strip()
+        if completed.returncode != 0 or completed.stderr.strip():
+            return _japanese_failure_fallback(job)
+        if message == "[SILENT]":
+            return ""
+        if not message.startswith(("【❌ 失敗】", "【🟠 要確認】")) or len(message) > 1200:
+            return _japanese_failure_fallback(job)
+        return message
+    except Exception:
+        return _japanese_failure_fallback(job)
+
+
 
 DEFAULT_FAILURE_REPEAT_ALERT_HOURS = 6.0
 
@@ -318,11 +428,12 @@ def _repeat_alert_withheld(incident: dict) -> bool:
 def _upsert_incident_for_failure(
     job: dict, error: str, *, output_file: Optional[Any] = None
 ) -> tuple[bool, Optional[str]]:
-    """Record a durable failure incident (grouped by job + error signature). Returns
-    ``(withheld, incident_id)``; withheld=True when the signature's incident is already ``closed``
-    (operator ack) or ``alerted`` inside the ``cron.failure_repeat_alert_hours`` cooldown (a ping
-    already went out) -> suppress the per-run ping. Store errors log at debug; the caller delivers
-    as if none existed."""
+    """Record a durable failure incident grouped by job and error signature.
+
+    Operator-closed incidents remain silent. When the shared external formatter is configured,
+    its notification state owns repeat suppression; otherwise Hermes keeps its incident cooldown.
+    Store errors log at debug and never break delivery.
+    """
     try:
         from cron.incidents import get_incident, upsert_incident
 
@@ -330,7 +441,13 @@ def _upsert_incident_for_failure(
             job["id"], str(error or ""), job_name=job.get("name"), output_file=output_file)
         incident = get_incident(incident_id)
         state = incident.get("state") if incident else None
-        withheld = state == "closed" or (state == "alerted" and _repeat_alert_withheld(incident))
+        formatter_script = _external_failure_formatter_script()
+        external_state_active = formatter_script is not None and formatter_script.is_file()
+        withheld = state == "closed" or (
+            not external_state_active
+            and state == "alerted"
+            and _repeat_alert_withheld(incident)
+        )
         return withheld, incident_id
     except Exception as exc:
         logger.debug(
@@ -2797,6 +2914,12 @@ def _save_compose_deliver(
         with fence.side_effect_fence() as owns_delivery:
             if not owns_delivery:
                 raise _FireClaimLostDuringSideEffect
+            if not d.success:
+                deliver_content = _format_failure_delivery(job, d.error)
+                if not deliver_content:
+                    d.should_deliver = False
+                    job["_notification_all_targets_suppressed"] = True
+                    return
             d.delivery_attempted = True
             d.delivery_error = _deliver_result(
                 job,
@@ -2889,12 +3012,14 @@ def _deliver_crash_failure(
     if incident_acked:
         return None, "suppressed_acked"
     delivery_error = None
+    content = _format_failure_delivery(job, err_text)
+    if not content:
+        job["_notification_all_targets_suppressed"] = True
+        return None, "suppressed"
     try:
         delivery_error = _deliver_result(
             job,
-            # Same text as the normal failure delivery: this run also counts toward
-            # failure_streak, so the nudge must leave through here too.
-            _summarize_cron_failure_for_delivery(job, err_text) + _failure_streak_nudge(job),
+            content,
             adapters=adapters,
             loop=loop,
             for_failure=True,

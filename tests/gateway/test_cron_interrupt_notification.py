@@ -23,11 +23,17 @@ from tools import browser_tool_lifecycle as bt_lifecycle
 
 
 @pytest.fixture(autouse=True)
-def _reset_cron_running_set():
+def _reset_cron_running_set(monkeypatch):
     import cron.scheduler as sched
 
     sched._running_job_ids.clear()
     sched._interrupted_job_ids.clear()
+
+    def format_failure(job, error):
+        cause = "Hermes再起動で実行中断" if "restart" in str(error) else "Hermes停止で実行中断"
+        return f"【❌ 失敗】{job.get('name') or job['id']}\n・原因: {cause}\n・状態: 自動再試行なし"
+
+    monkeypatch.setattr(sched, "_format_failure_delivery", format_failure)
     yield
     sched._running_job_ids.clear()
     sched._interrupted_job_ids.clear()
@@ -73,8 +79,8 @@ class TestNotifyInterruptedCronJobs:
         assert len(adapter.sent) == 1
         body = adapter.sent[0]
         assert "daily-digest" in body
-        assert "cut short" in body.lower()
-        assert "hermes cron run daily-digest" in body
+        assert "Hermes停止で実行中断" in body
+        assert "自動再試行なし" in body
         assert adapter.sent_calls[0][0] == "123456"
 
     @pytest.mark.asyncio
@@ -108,7 +114,7 @@ class TestNotifyInterruptedCronJobs:
                    return_value=[_telegram_target()]):
             await runner._notify_interrupted_cron_jobs([job["id"]])
 
-        assert "restarting" in adapter.sent[0]
+        assert "Hermes再起動で実行中断" in adapter.sent[0]
 
     @pytest.mark.asyncio
     async def test_local_only_job_stays_silent(self):
