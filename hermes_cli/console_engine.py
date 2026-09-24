@@ -307,6 +307,9 @@ _CLI_FAMILIES: dict[str, tuple[_CliSurface, str]] = {
         "list, show, info, *create, *use, *describe, *rename, *delete, *export, *import, "
         "*install, *update"),
     "cron": (_sub("cron", "build_cron_parser", "cmd_cron"), "*create, *edit, *remove, *tick"),
+    "ops": (
+        _sub("ops", "build_ops_parser", "ops_command"),
+        "status, jobs, runs, show-run, *run, *resume, *cancel"),
     "portal": (_CliSurface("adder", "hermes_cli.portal_cli", "add_parser"), "info, tools"),
     "project": (
         _CliSurface("builder", "hermes_cli.projects_cmd", "build_parser", "cmd_project"),

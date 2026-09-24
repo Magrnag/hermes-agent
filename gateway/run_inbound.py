@@ -1288,8 +1288,21 @@ class GatewayInboundMixin:
         # handler left those turns muted.
 
         _paused_notice = self._hm_estop_gate(event, source, is_internal)
+        from gateway.remote_control import maybe_handle_remote_control
         if _paused_notice is not None:
+            # Keep authenticated read/cancel controls reachable during an incident,
+            # while RUN and RESUME remain stopped.
+            _control_reply = await maybe_handle_remote_control(
+                self, event, source, control_only=True
+            )
+            if _control_reply is not None:
+                return _control_reply
             return _paused_notice
+        # Operations run after authorization and the emergency-stop control subset,
+        # but before pending or busy-session handling.
+        _remote_reply = await maybe_handle_remote_control(self, event, source)
+        if _remote_reply is not None:
+            return _remote_reply
 
         _quick_key = self._session_key_for_source(source)
         _reply = await self._hm_pending_reply_intercepts(event, source, _quick_key)

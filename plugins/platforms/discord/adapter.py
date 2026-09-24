@@ -6080,6 +6080,23 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
             timestamp=message.created_at, auto_skill=_skills, channel_prompt=_channel_prompt,
             channel_context=_channel_context,
         )
+        _is_dm_event = isinstance(message.channel, discord.DMChannel)
+        _event_channel_keys = set() if _is_dm_event else self._discord_channel_keys(message, parent_channel_id)
+        _event_allowed_channels = set() if _is_dm_event else self._get_allowed_channels()
+        event.metadata["discord_remote_control"] = {
+            "explicit_mention": bool(self._self_is_raw_mentioned(message)),
+            "explicit_channel": bool(
+                not _is_dm_event and "*" not in _event_allowed_channels
+                and _event_channel_keys & _event_allowed_channels
+            ),
+            "is_dm": _is_dm_event,
+            "message_id": str(getattr(message, "id", "") or ""),
+            "chat_id": str(getattr(effective_channel, "id", "") or ""),
+            "thread_id": str(thread_id or "") or None,
+            "guild_id": str(getattr(guild, "id", "") or "") or None,
+            "user_id": str(getattr(getattr(message, "author", None), "id", "") or "") or None,
+            "is_bot": bool(getattr(getattr(message, "author", None), "bot", False)),
+        }
         if (
             getattr(getattr(message, "author", None), "bot", False)
             and self._is_bot_tag_debounce_continuation(message)

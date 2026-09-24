@@ -343,6 +343,7 @@ from typing import Optional
 
 
 from hermes_cli.subcommands.cron import build_cron_parser
+from hermes_cli.subcommands.ops import build_ops_parser
 from hermes_cli.subcommands.sync import build_sync_parser
 from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
@@ -1902,6 +1903,7 @@ cmd_plugins = _forward_command("cmd_plugins", "hermes_cli.plugins_cmd", "plugins
 cmd_mcp = _forward_command("cmd_mcp", "hermes_cli.mcp_config", "mcp_command", forward_return=True)
 cmd_claw = _forward_command("cmd_claw", "hermes_cli.claw", "claw_command")
 cmd_import_agent = _forward_command("cmd_import_agent", "hermes_cli.agent_import", "import_agent_command")
+cmd_ops = _forward_command("cmd_ops", "hermes_cli.ops", "ops_command", forward_return=True)
 
 
 def cmd_model(args):
@@ -2734,7 +2736,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "skin", "skills", "slack", "status", "sync", "tools", "uninstall", "update",
         "vault",
         "webhook", "whatsapp", "whatsapp-cloud", "worktree", "chat", "secrets", "security",
-        "browser",
+        "browser", "ops",
         "verify",
         # Plugin commands missing from top-level --help is an accepted trade-off.
         "help",
@@ -3329,6 +3331,7 @@ def _build_cli_parser():
     build_status_parser(subparsers, cmd_status=cmd_status)
     build_pause_parser(subparsers)
     build_cron_parser(subparsers, cmd_cron=cmd_cron)
+    build_ops_parser(subparsers, cmd_ops=cmd_ops)
     build_sync_parser(subparsers, cmd_sync=cmd_sync)
     build_webhook_parser(subparsers, cmd_webhook=cmd_webhook)
 
