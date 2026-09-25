@@ -5898,6 +5898,7 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         is_voice_linked_channel = False
         # Save stripped text now: create_thread() can clobber message.content (breaks /command detection).
         raw_content = message.content.strip()
+        raw_explicit_mention = self._self_is_raw_mentioned(message)
         normalized_content = raw_content
         mention_prefix = False
         snapshot_attachments = []
@@ -6091,7 +6092,7 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         _event_guild_id = str(getattr(guild, "id", "") or "") or None
         _event_allowed_guilds = set() if _is_dm_event else self._get_allowed_guilds()
         event.metadata["discord_remote_control"] = {
-            "explicit_mention": bool(self._self_is_raw_mentioned(message)),
+            "explicit_mention": bool(raw_explicit_mention),
             "explicit_channel": bool(
                 not _is_dm_event and "*" not in _event_allowed_channels
                 and _event_channel_keys & _event_allowed_channels
