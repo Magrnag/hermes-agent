@@ -12,6 +12,7 @@ _LOG = logging.getLogger(__name__)
 
 from .models import (
     Action,
+    OMP_SMOKE_TARGET,
     PermissionClass,
     RequestContext,
     RemoteAction,
@@ -23,6 +24,10 @@ from .registries import JobRegistry, WorkspaceRegistry
 from .runner import OMPRunner, redact
 from .storage.ledger import Ledger
 from .locks import OperationLocks
+
+_OMP_SMOKE_TASK = (
+    "これは疎通確認です。ツールを一切使用せず、OMP_DISCORD_SMOKE_OK とだけ返してください。"
+)
 
 
 class OperationsRuntime:
@@ -299,6 +304,64 @@ class OperationsRuntime:
                             ),
                             details={"job_id": target},
                         )
+                elif action.action is Action.OMP_SMOKE:
+
+                    def started(pid: int, fingerprint: str | None) -> None:
+                        self.ledger.heartbeat(
+                            run_id, pid=pid, pid_start_fingerprint=fingerprint
+                        )
+
+                    result_data = self.runner.run(
+                        run_id=run_id,
+                        target=OMP_SMOKE_TARGET,
+                        prompt=_OMP_SMOKE_TASK,
+                        cwd_override=self.runner.smoke_test_cwd(),
+                        started_callback=started,
+                    )
+                    requested = {
+                        "final": RunStatus.SUCCEEDED,
+                        "retry": RunStatus.RETRY,
+                        "quota": RunStatus.QUOTA,
+                        "blocked": RunStatus.BLOCKED,
+                    }.get(str(result_data.get("status") or ""), RunStatus.FAILED)
+                    details = {
+                        **source_details,
+                        "workspace": OMP_SMOKE_TARGET,
+                        "resumable": False,
+                        "omp_session_id": result_data.get("session_id"),
+                        "log_path": result_data.get("log_path"),
+                    }
+                    mapped = self._transition_terminal(
+                        run_id,
+                        requested,
+                        message=(
+                            "OMP smoke test completed"
+                            if requested is RunStatus.SUCCEEDED
+                            else "OMP smoke test did not complete"
+                        ),
+                        details=details,
+                        omp_session_id=result_data.get("session_id"),
+                        pid=result_data.get("pid"),
+                        pid_start_fingerprint=result_data.get("pid_start_fingerprint"),
+                    )
+                    result = self._result(
+                        action,
+                        PermissionClass.SAFE_MANUAL,
+                        ok=mapped is RunStatus.SUCCEEDED,
+                        status=mapped,
+                        title="OMP smoke test",
+                        run_id=run_id,
+                        message=(
+                            (
+                                redact(str(result_data.get("output") or ""))[:500]
+                                or "OMP completed"
+                            )
+                            if mapped is RunStatus.SUCCEEDED
+                            else "OMP smoke test did not complete"
+                        ),
+                        details={"workspace": OMP_SMOKE_TARGET},
+                        resumable=False,
+                    )
                 else:
 
                     def started(pid: int, fingerprint: str | None) -> None:
@@ -569,6 +632,90 @@ class OperationsRuntime:
     def consume_confirmation(self, token: str, user_id: str, action: str) -> bool:
         return self.ledger.consume_confirmation(token, user_id, action)
 
+    def _omp_smoke(
+        self,
+        action: RemoteAction,
+        context: RequestContext,
+        permission: PermissionClass,
+        notifier: Callable[[StructuredResult], None] | None,
+        *,
+        wait: bool,
+    ) -> StructuredResult:
+        confirmation_action = self._confirmation_scope(action, context, _OMP_SMOKE_TASK)
+        token = action.confirmation or context.confirmation_token
+        if not context.user_id or not self.ledger.consume_confirmation(
+            token or "",
+            context.user_id,
+            confirmation_action,
+        ):
+            issued = self.ledger.issue_confirmation(
+                context.user_id or "local",
+                confirmation_action,
+            )
+            return self._result(
+                action,
+                permission,
+                status=RunStatus.WAITING_HUMAN,
+                title="Confirmation required",
+                message="確認コードを付けて同じ操作を再送してください",
+                details={"confirmation": issued},
+                requires_human=True,
+            )
+        details = {
+            "workspace": OMP_SMOKE_TARGET,
+            "thread_id": (context.model_extra or {}).get("thread_id"),
+            "message_id": (context.model_extra or {}).get("message_id"),
+            "session_id": context.session_id,
+        }
+        try:
+            row = self.ledger.create_run(
+                action=action.action.value,
+                target=OMP_SMOKE_TARGET,
+                permission=permission.value,
+                status=RunStatus.QUEUED.value,
+                title="OMP smoke test queued",
+                user_id=context.user_id,
+                source=context.source,
+                channel_id=context.channel_id,
+                correlation_id=context.correlation_id,
+                omp_session_id=context.session_id,
+                details=details,
+                concurrency=action.args.get("concurrency", "queue"),
+            )
+        except RuntimeError:
+            return self._result(
+                action,
+                permission,
+                status=RunStatus.BLOCKED,
+                title="Operation rejected",
+                message="An equivalent operation is already queued or running",
+            )
+        if row.get("coalesced"):
+            return self._result(
+                action,
+                permission,
+                ok=True,
+                status=RunStatus.COALESCED,
+                title="Operation coalesced",
+                run_id=row["run_id"],
+                message="An equivalent operation is already queued or running",
+            )
+        if wait:
+            return self._background(action, context, row["run_id"], notifier)
+        self._start_worker(
+            lambda: self._background(action, context, row["run_id"], notifier),
+            name=f"operations-omp-smoke-{row['run_id'][:8]}",
+        )
+        return self._result(
+            action,
+            permission,
+            ok=True,
+            status=RunStatus.QUEUED,
+            title="OMP smoke test queued",
+            run_id=row["run_id"],
+            message="Operation accepted",
+        )
+
     def handle(
         self,
         action: RemoteAction,
@@ -727,6 +874,8 @@ class OperationsRuntime:
                 run_id=str(target_id),
                 message="Operation cancelled",
             )
+        if action.action is Action.OMP_SMOKE:
+            return self._omp_smoke(action, context, permission, notifier, wait=wait)
         target = str(action.target or action.args.get("job_id") or "")
         is_workspace = target in self.workspaces.list()
         workspace_task = self._workspace_prompt(target)

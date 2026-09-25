@@ -150,6 +150,12 @@ def classify_permission(
         if not safe_remote_admitted(context):
             return PermissionClass.DENIED
         return PermissionClass.SAFE_MANUAL
+    if action.action is Action.OMP_SMOKE:
+        return (
+            PermissionClass.SAFE_MANUAL
+            if safe_remote_admitted(context)
+            else PermissionClass.DENIED
+        )
     return PermissionClass.DENIED
 
 

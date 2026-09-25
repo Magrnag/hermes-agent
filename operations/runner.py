@@ -153,6 +153,16 @@ class OMPRunner:
         self._owned: dict[str, tuple[subprocess.Popen, str | None]] = {}
         self._guard = threading.Lock()
 
+    def smoke_test_cwd(self) -> Path:
+        """Ops-owned, non-repo scratch directory for the OMP connectivity smoke test.
+
+        Never registered as a workspace and never resolved via ``WorkspaceRegistry``, so
+        the smoke run structurally cannot read/write a real repository.
+        """
+        path = self.operations_dir / "smoke"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def _envelope(self, run_id: str, prompt: str, target: str) -> Path:
         path = self.operations_dir / "envelopes" / f"{run_id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +190,14 @@ class OMPRunner:
         resume_session: str | None = None,
         output_callback: Callable[[str], None] | None = None,
         started_callback: Callable[[int, str | None], None] | None = None,
+        cwd_override: Path | None = None,
     ) -> dict[str, Any]:
         executable = shutil.which("omp")
-        cwd = self.workspace_registry.resolve(target)
+        cwd = (
+            cwd_override
+            if cwd_override is not None
+            else self.workspace_registry.resolve(target)
+        )
         if not executable:
             return {
                 "ok": False,

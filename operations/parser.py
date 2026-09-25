@@ -9,13 +9,14 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 
-from .models import Action, RemoteAction, RequestContext
+from .models import Action, OMP_SMOKE_TARGET, RemoteAction, RequestContext
 
 _CANDIDATE = re.compile(
     r"^(?:(?:/(?:ops?|operation)|ops?|operation)\b|"
     r"remote\s+(?:control|run|status)\b|"
     r"(?:run|resume|cancel|show|list|status|inventory|logs?|jobs?|runs?)\b|"
     r"状態を教えて$|ジョブ一覧$|実行履歴$|"
+    r"OMP疎通確認(?:\s+確認コード\s+[A-Za-z0-9_-]{8,128})?$|"
     r"[A-Za-z0-9][A-Za-z0-9_.-]{0,80}を今すぐ実行$|"
     r"実行ID\s+[A-Za-z0-9_.:-]+の詳細$|"
     r"[A-Za-z0-9_.:-]+を(?:止めて|再開)$|"
@@ -114,6 +115,15 @@ def parse_remote_action(
     if confirmation_match:
         confirmation = confirmation_match.group(1)
         command = raw[: confirmation_match.start()]
+
+    if command == "OMP疎通確認":
+        return _action(
+            Action.OMP_SMOKE,
+            raw=raw,
+            context=context,
+            target=OMP_SMOKE_TARGET,
+            confirmation=confirmation,
+        )
 
     match = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9_.-]{0,80})を今すぐ実行", command)
     if match:

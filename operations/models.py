@@ -20,6 +20,12 @@ class Action(StrEnum):
     RESUME = "resume"
     CANCEL = "cancel"
     INVENTORY = "inventory"
+    OMP_SMOKE = "omp_smoke"
+
+
+# Fixed, ops-owned target name for the OMP connectivity smoke test. Never registered as a
+# workspace and never a cron job id.
+OMP_SMOKE_TARGET = "omp-discord-smoke"
 
 
 class PermissionClass(StrEnum):
