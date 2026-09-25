@@ -29,6 +29,8 @@ _OMP_SMOKE_TASK = (
     "これは疎通確認です。ツールを一切使用せず、OMP_DISCORD_SMOKE_OK とだけ返してください。"
 )
 
+_OMP_SMOKE_EXPECTED = "OMP_DISCORD_SMOKE_OK"
+
 
 class OperationsRuntime:
     def __init__(self, home: str | Path | None = None, runner: Any = None):
@@ -324,6 +326,13 @@ class OperationsRuntime:
                         "quota": RunStatus.QUOTA,
                         "blocked": RunStatus.BLOCKED,
                     }.get(str(result_data.get("status") or ""), RunStatus.FAILED)
+                    final_text = result_data.get("final_text")
+                    semantic_ok = (
+                        isinstance(final_text, str)
+                        and final_text.strip() == _OMP_SMOKE_EXPECTED
+                    )
+                    if requested is RunStatus.SUCCEEDED and not semantic_ok:
+                        requested = RunStatus.FAILED
                     details = {
                         **source_details,
                         "workspace": OMP_SMOKE_TARGET,
@@ -352,11 +361,9 @@ class OperationsRuntime:
                         title="OMP smoke test",
                         run_id=run_id,
                         message=(
-                            (
-                                redact(str(result_data.get("output") or ""))[:500]
-                                or "OMP completed"
-                            )
+                            final_text.strip()
                             if mapped is RunStatus.SUCCEEDED
+                            and isinstance(final_text, str)
                             else "OMP smoke test did not complete"
                         ),
                         details={"workspace": OMP_SMOKE_TARGET},

@@ -55,6 +55,7 @@ class FakeRunner:
             "output": "OMP_DISCORD_SMOKE_OK",
             "log_path": "/tmp/log",
             "session_id": "sess-1",
+            "final_text": "OMP_DISCORD_SMOKE_OK",
             "pid": 4242,
             "pid_start_fingerprint": "fp",
         }

@@ -109,6 +109,27 @@ def classify_output(output: str, returncode: int | None) -> str:
     return "final" if returncode == 0 else "failed"
 
 
+def _extract_assistant_text(parsed: dict) -> str | None:
+    """Return the assistant's text from a single ``message_end`` JSONL event, or None if
+    this event isn't an assistant message_end. Non-text content blocks are ignored; text
+    blocks are concatenated in original list order (never reversed within one event)."""
+    if parsed.get("type") != "message_end":
+        return None
+    message = parsed.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            block.get("text", "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+    return None
+
+
 def process_start_fingerprint(pid: int | None) -> str | None:
     if not pid:
         return None
@@ -286,6 +307,7 @@ class OMPRunner:
                 self._owned.pop(run_id, None)
         metadata: dict[str, Any] = {}
         protocol_status = None
+        final_text: str | None = None
         for line in reversed(chunks):
             try:
                 parsed = json.loads(line)
@@ -299,6 +321,10 @@ class OMPRunner:
                 session_id = session.get("id")
             if session_id is not None and metadata.get("session_id") is None:
                 metadata["session_id"] = session_id
+            if final_text is None:
+                candidate_text = _extract_assistant_text(parsed)
+                if candidate_text is not None:
+                    final_text = candidate_text
             candidate = str(parsed.get("status") or "").lower()
             if candidate in _TERMINAL_STATUSES and protocol_status is None:
                 protocol_status = _TERMINAL_STATUSES[candidate]
@@ -321,6 +347,7 @@ class OMPRunner:
             "output": output,
             "log_path": str(log_path) if log_path else None,
             "session_id": metadata.get("session_id"),
+            "final_text": final_text,
             "pid": proc.pid,
             "pid_start_fingerprint": fingerprint,
         }
