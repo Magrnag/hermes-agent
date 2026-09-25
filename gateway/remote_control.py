@@ -26,6 +26,7 @@ def _context(source: Any, event: Any, facts: dict) -> Any:
         or getattr(source, "chat_id", ""),
         "profile": getattr(source, "profile", None),
         "allowed_channel": bool(facts.get("explicit_channel")),
+        "allowed_guild": bool(facts.get("allowed_guild")),
         "thread_id": facts.get("thread_id"),
         "message_id": facts.get("message_id"),
         "guild_id": facts.get("guild_id"),

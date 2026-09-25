@@ -91,8 +91,15 @@ def _text(action: RemoteAction) -> str:
 def safe_remote_admitted(context: RequestContext) -> bool:
     if not context.remote:
         return True
-    allowed = bool((context.model_extra or {}).get("allowed_channel", False))
-    return bool(context.authorized and context.bot_mentioned and allowed)
+    extra = context.model_extra or {}
+    allowed_channel = bool(extra.get("allowed_channel", False))
+    allowed_guild = bool(extra.get("allowed_guild", False))
+    return bool(
+        context.authorized
+        and context.bot_mentioned
+        and allowed_guild
+        and allowed_channel
+    )
 
 
 def classify_permission(

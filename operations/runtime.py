@@ -614,7 +614,10 @@ class OperationsRuntime:
         if (
             permission is PermissionClass.READ_ONLY
             and context.remote
-            and not context.authorized
+            and not (
+                context.authorized
+                and bool((context.model_extra or {}).get("allowed_guild", False))
+            )
         ):
             return self._result(
                 action,

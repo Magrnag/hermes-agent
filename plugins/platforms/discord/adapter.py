@@ -552,6 +552,7 @@ def _clean_discord_id(entry: str) -> str:
 # propagates) and falls back to os.getenv only outside multiplex.
 _GATE_ENV_KEYS = (
     "DISCORD_ALLOWED_USERS", "DISCORD_ALLOWED_ROLES", "DISCORD_ALLOWED_CHANNELS",
+    "DISCORD_ALLOWED_GUILDS",
     "DISCORD_IGNORED_CHANNELS", "DISCORD_NO_THREAD_CHANNELS", "DISCORD_FREE_RESPONSE_CHANNELS",
     "DISCORD_MISSED_MESSAGE_BACKFILL_CHANNELS", "DISCORD_ALLOW_ALL_USERS", "DISCORD_ALLOW_BOTS",
     "GATEWAY_ALLOW_ALL_USERS", "GATEWAY_ALLOWED_USERS",
@@ -4820,6 +4821,10 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         """This adapter's DISCORD_ALLOWED_CHANNELS gate (per-profile)."""
         return self._gate_csv_set(self._gate_raw("allowed_channels", "DISCORD_ALLOWED_CHANNELS"))
 
+    def _get_allowed_guilds(self) -> set:
+        """This adapter's DISCORD_ALLOWED_GUILDS gate (per-profile)."""
+        return self._gate_csv_set(self._gate_raw("allowed_guilds", "DISCORD_ALLOWED_GUILDS"))
+
     def _get_ignored_channels(self) -> set:
         """This adapter's DISCORD_IGNORED_CHANNELS gate (per-profile)."""
         return self._gate_csv_set(self._gate_raw("ignored_channels", "DISCORD_IGNORED_CHANNELS"))
@@ -6083,17 +6088,24 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         _is_dm_event = isinstance(message.channel, discord.DMChannel)
         _event_channel_keys = set() if _is_dm_event else self._discord_channel_keys(message, parent_channel_id)
         _event_allowed_channels = set() if _is_dm_event else self._get_allowed_channels()
+        _event_guild_id = str(getattr(guild, "id", "") or "") or None
+        _event_allowed_guilds = set() if _is_dm_event else self._get_allowed_guilds()
         event.metadata["discord_remote_control"] = {
             "explicit_mention": bool(self._self_is_raw_mentioned(message)),
             "explicit_channel": bool(
                 not _is_dm_event and "*" not in _event_allowed_channels
                 and _event_channel_keys & _event_allowed_channels
             ),
+            "allowed_guild": bool(
+                not _is_dm_event and _event_guild_id and _event_allowed_guilds
+                and "*" not in _event_allowed_guilds
+                and _event_guild_id in _event_allowed_guilds
+            ),
             "is_dm": _is_dm_event,
             "message_id": str(getattr(message, "id", "") or ""),
             "chat_id": str(getattr(effective_channel, "id", "") or ""),
             "thread_id": str(thread_id or "") or None,
-            "guild_id": str(getattr(guild, "id", "") or "") or None,
+            "guild_id": _event_guild_id,
             "user_id": str(getattr(getattr(message, "author", None), "id", "") or "") or None,
             "is_bot": bool(getattr(getattr(message, "author", None), "bot", False)),
         }
@@ -7254,6 +7266,7 @@ def _apply_yaml_config(yaml_cfg: dict, discord_cfg: dict) -> dict | None:
         seeded_extra["missed_message_backfill"] = dict(backfill_cfg)
     _gate("ignored_channels", "DISCORD_IGNORED_CHANNELS", from_platform_extra=False)
     _gate("allowed_channels", "DISCORD_ALLOWED_CHANNELS", from_platform_extra=False)
+    _gate("allowed_guilds", "DISCORD_ALLOWED_GUILDS", from_platform_extra=False)
     _gate("no_thread_channels", "DISCORD_NO_THREAD_CHANNELS", from_platform_extra=False)
     # history_backfill: recover mention-gated channel messages between bot turns.
     if "history_backfill" in discord_cfg:

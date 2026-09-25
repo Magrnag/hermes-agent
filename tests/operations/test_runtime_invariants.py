@@ -58,17 +58,52 @@ def test_typed_parser_and_permission_boundaries(tmp_path):
         runtime.handle(read, RequestContext(is_local=False)).permission
         is PermissionClass.DENIED
     )
+    read_authorized_no_guild = parse_remote_action(
+        "状態を教えて", RequestContext(is_local=False, authorized=True)
+    )
+    assert (
+        runtime.handle(
+            read_authorized_no_guild, RequestContext(is_local=False, authorized=True)
+        ).permission
+        is PermissionClass.DENIED
+    )
+    read_authorized_guild = parse_remote_action(
+        "状態を教えて",
+        RequestContext(is_local=False, authorized=True, allowed_guild=True),
+    )
+    assert (
+        runtime.handle(
+            read_authorized_guild,
+            RequestContext(is_local=False, authorized=True, allowed_guild=True),
+        ).permission
+        is PermissionClass.READ_ONLY
+    )
     run = parse_remote_action("github-watchを今すぐ実行", local)
     remote = RequestContext(is_local=False, authorized=True, bot_mentioned=True)
     assert classify_permission(run, remote) is PermissionClass.DENIED
-    admitted = remote.model_copy(update={"allowed_channel": True})
+    channel_only = remote.model_copy(update={"allowed_channel": True})
+    assert classify_permission(run, channel_only) is PermissionClass.DENIED
+    guild_only = remote.model_copy(update={"allowed_guild": True})
+    assert classify_permission(run, guild_only) is PermissionClass.DENIED
+    wrong_guild = remote.model_copy(
+        update={"allowed_channel": True, "allowed_guild": False}
+    )
+    assert classify_permission(run, wrong_guild) is PermissionClass.DENIED
+    admitted = remote.model_copy(
+        update={"allowed_channel": True, "allowed_guild": True}
+    )
     assert classify_permission(run, admitted) is PermissionClass.SAFE_MANUAL
+    unmentioned = admitted.model_copy(update={"bot_mentioned": False})
+    assert classify_permission(run, unmentioned) is PermissionClass.DENIED
+    unauthorized = admitted.model_copy(update={"authorized": False})
+    assert classify_permission(run, unauthorized) is PermissionClass.DENIED
     resumable = RemoteAction(
         action=Action.RESUME,
         target="r1",
         args={"resumable": True, "safe": True},
     )
     assert classify_permission(resumable, remote) is PermissionClass.DENIED
+    assert classify_permission(resumable, guild_only) is PermissionClass.DENIED
     assert classify_permission(resumable, admitted) is PermissionClass.SAFE_MANUAL
     dangerous = parse_remote_action("本番資金を送金して", local)
     assert classify_permission(dangerous, local) is PermissionClass.LIVE_MONEY
@@ -132,6 +167,7 @@ def test_remote_ownership_and_confirmation_scope_are_bound(tmp_path):
         user_id="other",
         channel_id="channel-a",
         allowed_channel=True,
+        allowed_guild=True,
         guild_id="guild",
     )
     result = runtime.handle(

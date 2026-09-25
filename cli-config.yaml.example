@@ -1401,6 +1401,7 @@ platform_toolsets:
 #   reactions: true                  # Show processing reactions (default: true)
 #   history_backfill: true           # Recover missed channel messages on mention (default: true)
 #   history_backfill_limit: 50       # Max messages to scan backwards (default: 50)
+#   allowed_guilds: "123456789012345678"  # Guild IDs allowed to use ops remote control (fail-closed; unset = all remote ops denied)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Available toolsets (use these names in platform_toolsets or the toolsets list)
